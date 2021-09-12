@@ -699,21 +699,14 @@ impl Processor {
 
         //CHECK FOR INPUT CLOSING CAPABILITY
         //this could be wrapped sol temp account, or second swap of a route
-        //in both cases the token would be owned by the xfer auth, which shouldn't be the refundee
+        //in both cases the token would be owned by a xfer auth, which isn't the refundee
         let token_a = Self::unpack_token_account(source_info, token_program_info.key)?;
         let owner_is_refundee = match refund_account_info {
             None => false,
             Some(r) => *r.key == token_a.owner
         };
-        //if we have permission to close out this account
+        //if we have permission to close out this account (user_transfer_authority_info is signed)
         if token_a.owner == *user_transfer_authority_info.key {
-            //if the owner isn't the refundee then this must be a temp account
-            //A non-native temp account on the input should always be left empty so we can close it
-            //this is stopping a caller from shooting themselves in the foot
-            if !owner_is_refundee && token_a.amount > 0 && !token_a.is_native() {
-                return Err(SwapError::NonRefundeeTransferAuthorityNotEmpty.into());
-            } 
-            
             //if empty, we close it
             if token_a.amount == 0 || token_a.is_native() {
                 if refund_account_info.is_none() {
@@ -735,6 +728,11 @@ impl Processor {
                         user_transfer_authority_info.clone(),
                     ],
                 )?;
+            //if the owner isn't the refundee then this must be a temp account
+            //A non-native temp account on the input should always be left empty so we can close it
+            //this is stopping a caller from shooting themselves in the foot
+            } else if !owner_is_refundee {
+                return Err(SwapError::NonRefundeeTransferAuthorityNotEmpty.into());
             }
         //we could have closed but authority was set wrong, just leave a message
         } else if token_a.is_native() {
@@ -756,13 +754,6 @@ impl Processor {
 
             //if we can potentially close out this account
             if token_b.owner == *user_transfer_authority_info.key {
-                //this is a safety check. if the owner isn't the refundee then this
-                //must be a temp authority. A temp authority on the output should ONLY
-                //be used for WSOL
-                if !owner_is_refundee && !token_b.is_native() {
-                    return Err(SwapError::NonRefundeeTransferAuthorityOwnsNonNative.into());
-                } 
-                
                 if token_b.is_native() {
                     if refund_account_info.is_none() {
                         return Err(SwapError::TransferAuthorityOwnsButRefundeeNotProvided.into());
@@ -782,6 +773,11 @@ impl Processor {
                             user_transfer_authority_info.clone(),
                         ],
                     )?;
+                //this is a safety check. if the owner isn't the refundee then this
+                //must be a temp authority. A temp authority on the output should ONLY
+                //be used for WSOL
+                } else if !owner_is_refundee {
+                    return Err(SwapError::NonRefundeeTransferAuthorityOwnsNonNative.into());
                 }
             //we should have closed but authority was set wrong, just leave a message?
             } else if token_b.is_native() {
